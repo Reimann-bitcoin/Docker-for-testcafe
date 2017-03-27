@@ -13,14 +13,11 @@ RUN \
   apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv EA312927 && \
   apt-get update && \
   apt-get install -y git unzip wget curl && \
-  apt-get install -y mongodb-org && \
   curl -sL https://deb.nodesource.com/setup_6.x | bash - && \
   apt-get install -y nodejs
 
 RUN \
   apt-get install -y -q chromium-browser && \
-  chown -hR mongodb: /var/lib/mongodb && \
-  chown -hR mongodb: /var/log/mongodb && \
   npm install -g testcafe
 
 # xvfb - in-memory stub for x-server
@@ -72,7 +69,6 @@ CMD ["bash", "/scripts/runtests.sh"]
 
 
 ##### ./build.sh #####
-
 #!/bin/sh
 export FIRST_ARG=$1
 export SECOND_ARG=$2
@@ -107,7 +103,6 @@ chromium-browser --no-sandbox --user-data-dir=/root --no-first-run --no-default-
 export DISPLAY=:99
 Xvfb :99 -screen 0 1600x1200x16 &
 x11vnc -display :99 -N -forever &
-/usr/bin/mongod --config /etc/mongod.conf &
 sleep 5
 
 testcafe path:/scripts/chromestarter.sh /src/testcafe-tests/*
