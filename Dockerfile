@@ -1,0 +1,108 @@
+##### ./testcafe_ubuntu.dockerfile #####
+# Pull base image.
+FROM ubuntu:16.04
+
+ENV LC_ALL C
+ENV DEBIAN_FRONTEND noninteractive
+ENV DEBCONF_NONINTERACTIVE_SEEN true
+
+# Install.
+RUN \
+  sed -i 's/# \(.*multiverse$\)/\1/g' /etc/apt/sources.list && \
+  echo "deb http://repo.mongodb.org/apt/ubuntu xenial/mongodb-org/3.2 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-3.2.list && \
+  apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv EA312927 && \
+  apt-get update && \
+  apt-get install -y git unzip wget curl && \
+  curl -sL https://deb.nodesource.com/setup_6.x | bash - && \
+  apt-get install -y nodejs
+
+RUN \
+  apt-get install -y -q chromium-browser && \
+  npm install -g testcafe
+
+# xvfb - in-memory stub for x-server
+# x11vnc - remote viewer for x-server
+RUN apt-get install -y -q \
+  x11vnc \
+  xvfb \
+  xfonts-100dpi \
+  xfonts-75dpi \
+  xfonts-scalable \
+  xfonts-cyrillic
+
+RUN \
+  curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \
+  echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list && \
+  apt-get update && apt-get install yarn
+
+EXPOSE 4444 5999
+
+# Define default command.
+CMD [""]
+
+
+##### ./testcafe_yourapp.dockerfile #####
+# Pull base image.
+FROM testcafe_ubuntu_image
+
+ENV LC_ALL C
+ENV DEBIAN_FRONTEND noninteractive
+ENV DEBCONF_NONINTERACTIVE_SEEN true
+
+ARG LAST_COMMIT_SHA=NO_COMMIT_SHA
+ARG LAST_BRANCH_NAME=NO_BRANCH_NAME
+
+COPY scripts /scripts
+RUN \
+  echo Run functional tests for branch $LAST_BRANCH_NAME on commit $LAST_COMMIT_SHA && \
+  export BRANCH_NAME=${LAST_BRANCH_NAME:=master} && \
+  git clone --depth 1 -b $BRANCH_NAME git@github.com:YOUR.GIT src && \
+  cd /src && \
+  yarn install
+
+WORKDIR /src
+
+EXPOSE 4444 5999
+
+# Define default command.
+CMD ["bash", "/scripts/runtests.sh"]
+
+
+##### ./build.sh #####
+#!/bin/sh
+export FIRST_ARG=$1
+export SECOND_ARG=$2
+# Fetch last commit SHA in master branch by default
+export LAST_COMMIT_SHA=`git ls-remote git@github.com:YOUR.GIT | head -1 | sed -r "s/((\w|\d)+?)\s(.+)/\1/ig"`
+export BRANCH_NAME=${FIRST_ARG:=master}
+export COMMIT_SHA=${SECOND_ARG:=$LAST_COMMIT_SHA}
+
+# Build base ubuntu + nodejs + mongo + testcafe + vnc + chromium image, if not built already
+docker build -t testcafe_ubuntu_image -f testcafe_ubuntu.dockerfile .
+
+# Build testcase suite image for YourApp, depending on git branch name and commit SHA value
+docker build -t testcafe_yourapp_image -f testcafe_yourapp.dockerfile --build-arg LAST_COMMIT_SHA=$COMMIT_SHA --build-arg LAST_BRANCH_NAME=$BRANCH_NAME . || exit 2
+
+# Remove last testcafe image with YourApp testsuite
+docker rmi -f testcafe_yourapp_image
+
+# Remove container for YourApp testcase suite from last launch
+docker rm -f testcafe_container
+
+# Create and run new container for YourApp testcase, translate VNC port
+docker run --name testcafe_container -p 5999:5999 testcafe_yourapp_image
+
+
+##### ./scripts/chromestarter.sh #####
+#!/bin/bash
+chromium-browser --no-sandbox --user-data-dir=/root --no-first-run --no-default-browser-check --window-size="1600,1200" $2
+
+
+##### ./scripts/runtests.sh #####
+#!/bin/bash
+export DISPLAY=:99
+Xvfb :99 -screen 0 1600x1200x16 &
+x11vnc -display :99 -N -forever &
+sleep 5
+
+testcafe path:/scripts/chromestarter.sh /src/testcafe-tests/*
